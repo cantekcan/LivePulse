@@ -1,0 +1,57 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "LivePulse_Pass123!"
+    ports:
+      - "1433:1433"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  aspire-dashboard:
+    image: mcr.microsoft.com/dotnet/aspire-dashboard:9.0
+    environment:
+      DASHBOARD__FRONTEND__AUTHMODE: Unsecured
+      DASHBOARD__OTLP__AUTHMODE: Unsecured
+    ports:
+      - "18888:18888"
+      - "4317:18889"
+
+  api:
+    build:
+      context: .
+      dockerfile: src/LivePulse.Api/Dockerfile
+    depends_on:
+      - sqlserver
+      - redis
+      - rabbitmq
+      - aspire-dashboard
+    environment:
+      ConnectionStrings__SqlServer: "Server=sqlserver;Database=LivePulse;User Id=sa;Password=LivePulse_Pass123!;TrustServerCertificate=True"
+      ConnectionStrings__Redis: "redis:6379"
+      RabbitMq__Host: rabbitmq
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://aspire-dashboard:18889"
+    ports:
+      - "8085:8080"
+
+  simulator:
+    build:
+      context: .
+      dockerfile: src/LivePulse.Simulator/Dockerfile
+    depends_on:
+      - rabbitmq
+      - api
+    environment:
+      RabbitMq__Host: rabbitmq
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://aspire-dashboard:18889"
+      Simulator__ApiBaseUrl: "http://api:8080"

@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LivePulse.Domain/LivePulse.Domain.csproj" />
+    <Project Path="src/LivePulse.Application/LivePulse.Application.csproj" />
+    <Project Path="src/LivePulse.Infrastructure/LivePulse.Infrastructure.csproj" />
+    <Project Path="src/LivePulse.Api/LivePulse.Api.csproj" />
+    <Project Path="src/LivePulse.Simulator/LivePulse.Simulator.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LivePulse.Domain.Tests/LivePulse.Domain.Tests.csproj" />
+    <Project Path="tests/LivePulse.Application.Tests/LivePulse.Application.Tests.csproj" />
+    <Project Path="tests/LivePulse.IntegrationTests/LivePulse.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

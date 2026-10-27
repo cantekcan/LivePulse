@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LivePulse</title>
+<style>
+  :root {
+    --bg: #0f1419; --card: #1a212b; --line: #2a3441; --text: #e6edf3; --muted: #8b98a8;
+    --accent: #3b82f6; --up: #22c55e; --down: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 20px; }
+  #connection { font-size: 13px; color: var(--muted); }
+  main { display: grid; grid-template-columns: 1fr 340px; gap: 24px; padding: 24px; max-width: 1100px; margin: 0 auto; }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+  .match { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .match-head { display: flex; justify-content: space-between; margin-bottom: 12px; }
+  .teams { font-weight: 600; }
+  .score { font-size: 20px; font-weight: 700; }
+  .minute { color: var(--muted); font-size: 13px; }
+  .odds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .odd { background: #222b37; border: 1px solid var(--line); color: var(--text); border-radius: 8px; padding: 10px; cursor: pointer; font-size: 15px; }
+  .odd small { display: block; color: var(--muted); font-size: 12px; }
+  .odd.selected { border-color: var(--accent); background: #1e3a66; }
+  .odd.flash-up { animation: flashUp 1.2s; }
+  .odd.flash-down { animation: flashDown 1.2s; }
+  @keyframes flashUp { 0% { background: var(--up); } 100% { background: #222b37; } }
+  @keyframes flashDown { 0% { background: var(--down); } 100% { background: #222b37; } }
+  aside { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; height: fit-content; }
+  aside h2 { margin: 0 0 12px; font-size: 16px; }
+  .selection { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .selection .remove { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
+  .changed { color: var(--down); font-size: 12px; }
+  .row { display: flex; justify-content: space-between; margin: 12px 0; }
+  input[type=number] { width: 110px; background: #222b37; border: 1px solid var(--line); color: var(--text); border-radius: 6px; padding: 6px; }
+  button.primary { width: 100%; padding: 10px; border: none; border-radius: 8px; background: var(--accent); color: white; font-size: 15px; cursor: pointer; }
+  button.primary:disabled { opacity: .5; cursor: default; }
+  button.accept { width: 100%; padding: 10px; margin-top: 8px; border: 1px solid var(--up); border-radius: 8px; background: none; color: var(--up); cursor: pointer; }
+  #message { margin-top: 12px; font-size: 14px; }
+  .ok { color: var(--up); } .err { color: var(--down); }
+  .empty { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LivePulse</h1>
+  <span id="connection">Bağlanıyor...</span>
+</header>
+<main>
+  <section id="matches"></section>
+  <aside>
+    <h2>Kupon</h2>
+    <div id="selections"><p class="empty">Bir oran seçerek başla.</p></div>
+    <div class="row"><span>Toplam oran</span><strong id="total">-</strong></div>
+    <div class="row"><label for="stake">Bahis tutarı</label><input id="stake" type="number" min="1" max="10000" value="10"></div>
+    <button id="send" class="primary" disabled>Kuponu gönder</button>
+    <button id="accept" class="accept" hidden>Yeni oranları kabul et</button>
+    <div id="message"></div>
+  </aside>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+<script>
+const PICKS = [['Home', '1', 'home'], ['Draw', 'X', 'draw'], ['Away', '2', 'away']];
+const matches = new Map();      // matchId -> match dto
+const coupon = new Map();       // matchId -> { pick, odds } (odds the user saw)
+let pendingChanges = null;      // latest 409 changes
+let idempotencyKey = crypto.randomUUID();
+
+const $ = id => document.getElementById(id);
+
+function oddsOf(match, pick) {
+  return match.odds[PICKS.find(p => p[0] === pick)[2]];
+}
+
+function renderMatches(flash = {}) {
+  const container = $('matches');
+  if (matches.size === 0) {
+    container.innerHTML = '<p class="empty">Canlı maç yok.</p>';
+    return;
+  }
+  container.innerHTML = '';
+  for (const match of matches.values()) {
+    const card = document.createElement('div');
+    card.className = 'match';
+    card.innerHTML = `
+      <div class="match-head">
+        <span class="teams">${match.homeTeam} - ${match.awayTeam}</span>
+        <span><span class="score">${match.homeScore} - ${match.awayScore}</span> <span class="minute">${match.minute}'</span></span>
+      </div>
+      <div class="odds"></div>`;
+    const oddsBox = card.querySelector('.odds');
+    for (const [pick, label] of PICKS) {
+      const button = document.createElement('button');
+      button.className = 'odd';
+      if (coupon.get(match.id)?.pick === pick) button.classList.add('selected');
+      const flashClass = flash[match.id]?.[pick];
+      if (flashClass) button.classList.add(flashClass);
+      button.innerHTML = `<small>${label}</small>${oddsOf(match, pick).toFixed(2)}`;
+      button.onclick = () => togglePick(match, pick);
+      oddsBox.appendChild(button);
+    }
+    container.appendChild(card);
+  }
+}
+
+function togglePick(match, pick) {
+  if (coupon.get(match.id)?.pick === pick) coupon.delete(match.id);
+  else coupon.set(match.id, { pick, odds: oddsOf(match, pick) });
+  resetAttempt();
+  render();
+}
+
+function renderCoupon() {
+  const box = $('selections');
+  box.innerHTML = coupon.size ? '' : '<p class="empty">Bir oran seçerek başla.</p>';
+  let total = 1;
+  for (const [matchId, selection] of coupon) {
+    const match = matches.get(matchId);
+    total *= selection.odds;
+    const current = oddsOf(match, selection.pick);
+    const row = document.createElement('div');
+    row.className = 'selection';
+    row.innerHTML = `
+      <span>${match.homeTeam} - ${match.awayTeam}<br>
+        <small>${PICKS.find(p => p[0] === selection.pick)[1]} @ ${selection.odds.toFixed(2)}</small>
+        ${current !== selection.odds ? `<span class="changed"> şimdi ${current.toFixed(2)}</span>` : ''}
+      </span>
+      <button class="remove" title="Kaldır">✕</button>`;
+    row.querySelector('.remove').onclick = () => { coupon.delete(matchId); resetAttempt(); render(); };
+    box.appendChild(row);
+  }
+  $('total').textContent = coupon.size ? total.toFixed(2) : '-';
+  $('send').disabled = coupon.size === 0;
+  $('accept').hidden = !pendingChanges;
+}
+
+function render(flash) { renderMatches(flash); renderCoupon(); }
+
+function resetAttempt() {
+  idempotencyKey = crypto.randomUUID();
+  pendingChanges = null;
+  showMessage('');
+}
+
+function showMessage(text, cls = '') {
+  const el = $('message');
+  el.textContent = text;
+  el.className = cls;
+}
+
+function applyUpdate(updated) {
+  const previous = matches.get(updated.id);
+  const flash = {};
+  if (previous) {
+    for (const [pick] of PICKS) {
+      const before = oddsOf(previous, pick), after = oddsOf(updated, pick);
+      if (after > before) (flash[updated.id] ??= {})[pick] = 'flash-up';
+      if (after < before) (flash[updated.id] ??= {})[pick] = 'flash-down';
+    }
+  }
+  if (updated.status === 'Finished') { matches.delete(updated.id); coupon.delete(updated.id); }
+  else matches.set(updated.id, updated);
+  render(flash);
+}
+
+async function sendCoupon() {
+  $('send').disabled = true;
+  const body = {
+    stake: Number($('stake').value),
+    selections: [...coupon].map(([matchId, s]) => ({ matchId, pick: s.pick, odds: s.odds }))
+  };
+  try {
+    const response = await fetch('/api/coupons', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+      body: JSON.stringify(body)
+    });
+    const data = await response.json();
+    if (response.ok) {
+      showMessage(`Kupon kabul edildi. Toplam oran ${data.totalOdds.toFixed(2)}, olası kazanç ${(data.totalOdds * data.stake).toFixed(2)}`, 'ok');
+      coupon.clear();
+      idempotencyKey = crypto.randomUUID();
+    } else if (response.status === 409) {
+      pendingChanges = data.changes;
+      const lines = data.changes.map(c => `${c.clientOdds.toFixed(2)} → ${c.currentOdds[PICKS.find(p => p[0] === c.pick)[2]].toFixed(2)}`);
+      showMessage('Oranlar değişti: ' + lines.join(', '), 'err');
+    } else {
+      showMessage(data.title ?? 'Kupon gönderilemedi.', 'err');
+    }
+  } catch {
+    showMessage('Sunucuya ulaşılamadı.', 'err');
+  }
+  render();
+}
+
+function acceptNewOdds() {
+  for (const change of pendingChanges) {
+    const selection = coupon.get(change.matchId);
+    if (selection) selection.odds = change.currentOdds[PICKS.find(p => p[0] === change.pick)[2]];
+  }
+  pendingChanges = null;
+  idempotencyKey = crypto.randomUUID();
+  showMessage('Yeni oranlar kabul edildi, tekrar gönderebilirsin.');
+  render();
+}
+
+async function start() {
+  $('send').onclick = sendCoupon;
+  $('accept').onclick = acceptNewOdds;
+
+  const list = await (await fetch('/api/matches')).json();
+  list.forEach(m => matches.set(m.id, m));
+  render();
+
+  const connection = new signalR.HubConnectionBuilder()
+    .withUrl('/hubs/odds')
+    .withAutomaticReconnect()
+    .build();
+  connection.on('OddsUpdated', applyUpdate);
+  connection.onreconnecting(() => $('connection').textContent = 'Yeniden bağlanıyor...');
+  connection.onreconnected(() => $('connection').textContent = 'Canlı');
+  await connection.start();
+  $('connection').textContent = 'Canlı';
+}
+
+start().catch(() => { $('connection').textContent = 'Bağlantı kurulamadı'; });
+</script>
+</body>
+</html>
