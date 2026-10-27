@@ -4,7 +4,9 @@ Sentetik maç olayları üreten, oranları gerçek zamanlı güncelleyen ve kupo
 
 ## Demo
 
-<!-- Videoyu GitHub'da bu satırın altına sürükle-bırak -->
+Uploading Kayıt 2026-10-27 154118.mp4…
+
+
 
 ## Nasıl çalışır?
 
