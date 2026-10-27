@@ -4,7 +4,8 @@ Sentetik maç olayları üreten, oranları gerçek zamanlı güncelleyen ve kupo
 
 ## Demo
 
-https://github.com/user-attachments/assets/c2d6d5f7-2ee0-416b-9179-41c4bc413bf2
+
+
 
 
 
